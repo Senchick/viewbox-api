@@ -6,10 +6,18 @@ use Swoole\http\Server;
 
 use \FastRoute\simpleDispatcher;
 use \FastRoute\Dispatcher;
+use \FastRoute\RouteCollector;
+
+use \GuzzleHttp\Client;
+
+require 'vendor/autoload.php';
+
+error_reporting(E_ALL & ~E_NOTICE);
+
+$client = new \Swoole\Client();
 
 function handleRequest(Dispatcher $dispatcher, string $request_method, string $request_uri) {
-
-    list($code, $handler, $vars) = $dispatcher->dispatch($request_method, $request_uri);
+    @list($code, $handler, $vars) = $dispatcher->dispatch($request_method, $request_uri);
     switch ($code) {
         case Dispatcher::NOT_FOUND:
             $result = [
@@ -21,7 +29,6 @@ function handleRequest(Dispatcher $dispatcher, string $request_method, string $r
             ];
             break;
         case Dispatcher::METHOD_NOT_ALLOWED:
-            $allowedMethods = $handler;
             $result = [
                 'status' => 405,
                 'message' => 'Method Not Allowed',
@@ -31,14 +38,45 @@ function handleRequest(Dispatcher $dispatcher, string $request_method, string $r
             ];
             break;
         case Dispatcher::FOUND:
-            $result = call_user_func($handler, $vars);
+            try {
+                $result = call_user_func($handler, $vars);
+            }catch (Error $e){
+                return [
+                    'status' => 500,
+                    'message' => 'Internal Server Error',
+                    'errors' => [
+                        $e->getMessage()
+                    ]
+                ];
+            }
             break;
     }
     return $result;
 }
-$dispatcher = \FastRoute\simpleDispatcher(function (\FastRoute\RouteCollector $r){
-    $r->addRoute('GET', '/lastGroupPost', function (){
-        return "чебурнет";
+
+$cachedDispatcher = \FastRoute\cachedDispatcher(function (RouteCollector $r) use ($client) {
+
+}, [
+    'cacheFile' => __DIR__ . '/route.cache',
+    'cacheDisabled' => true,
+]);
+
+$dispatcher = \FastRoute\simpleDispatcher(function (RouteCollector $r) use ($client) {
+    $r->addRoute('GET', '/blog/posts/last', function () use ($client) {
+        $response = $client->request('GET', 'https://m.vk.com/viewbox', [
+            'headers' => [
+                'user-agent' => 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.142 Mobile Safari/537.36'
+            ]
+        ]);
+
+
+        preg_match("/<div class=\"pi_text\">(.+?)<\/div>/",$response->getBody(), $arr);
+        preg_match("/background-image: url\((.+?)\);\"/",$response->getBody(), $arr2);
+
+        return [
+            "text"  => $arr[1],
+            "image" => $arr2[1]
+        ];
     });
 });
 
@@ -50,12 +88,31 @@ $server->set([
 ]);
 
 $server->on('start', function (Server $server)  {
-    echo sprintf('Swoole http server is started');
+    echo 'Swoole http server is started.' . PHP_EOL;
 });
 
-$server->on('request', function (Request $request, Response $response){
-    print_r($request);
-    $response->end('k');
+$server->on('request', function (Request $request, Response $response) use ($dispatcher){
+    $request_method = $request->server['request_method'];
+    $request_uri = $request->server['request_uri'];
+
+    $_SERVER['REQUEST_URI'] = $request_uri;
+    $_SERVER['REQUEST_METHOD'] = $request_method;
+    $_SERVER['REMOTE_ADDR'] = $request->server['remote_addr'];
+    $_GET = $request->get ?? [];
+    $_FILES = $request->files ?? [];
+
+    if ($request_method === 'POST' && $request->header['content-type'] === 'application/json') {
+        $body = $request->rawContent();
+        $_POST = empty($body) ? [] : json_decode($body);
+    } else {
+        $_POST = $request->post ?? [];
+    }
+
+    $response->header('Content-Type', 'application/json');
+    $result = handleRequest($dispatcher, $request_method, $request_uri);
+
+    $response->end(json_encode($result));
 });
+
 
 $server->start();
