@@ -14,7 +14,7 @@ require 'vendor/autoload.php';
 
 error_reporting(E_ALL & ~E_NOTICE);
 
-$client = new \Swoole\Client();
+$client = new Client();
 
 function handleRequest(Dispatcher $dispatcher, string $request_method, string $request_uri) {
     @list($code, $handler, $vars) = $dispatcher->dispatch($request_method, $request_uri);
