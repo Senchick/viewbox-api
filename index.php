@@ -3,6 +3,7 @@
 use Swoole\http\Response;
 use Swoole\http\Request;
 use Swoole\http\Server;
+use Swoole\MySQL;
 
 use \FastRoute\simpleDispatcher;
 use \FastRoute\Dispatcher;
